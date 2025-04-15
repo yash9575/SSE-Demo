@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Demo</title>
+  <style>
+    #warning { display: none; background: #ffcccc; padding: 10px; }
+    #warning button { margin-left: 10px; }
+    #connection-warning { display: none; background: #ffe6b3; padding: 10px; }
+    #connection-warning a { margin-left: 10px; color: blue; cursor: pointer; text-decoration: underline; }
+    textarea { width: 100%; max-width: 500px; }
+    #status { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div id="connection-warning">
+    <span id="connection-text">Connection lost. Updates are paused.</span>
+    <a id="reconnect-link" onclick="reconnectSSE()">Try now</a>
+  </div>
+  <div id="warning">
+    <span id="warning-text"></span>
+    <button onclick="refreshPage()">Refresh</button>
+  </div>
+  <h1>Workflow Editor</h1>
+  <label>Username: <input id="username" value="userA"></label><br><br>
+  <textarea id="flowData" rows="10"></textarea><br>
+  <button id="saveBtn" onclick="saveFlow()">Save</button>
+  <div id="status">Loading...</div>
+
+  <script>
+    const flowId = 'flow1';
+    let eventSource = null;
+
+    // Generate or retrieve sessionId per tab
+    let sessionId = sessionStorage.getItem('sessionId');
+    if (!sessionId) {
+      sessionId = 'tab-' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('sessionId', sessionId);
+    }
+
+    const statusDiv = document.getElementById('status');
+    const flowDataTextarea = document.getElementById('flowData');
+    const usernameInput = document.getElementById('username');
+    const saveBtn = document.getElementById('saveBtn');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+    const connectionWarningDiv = document.getElementById('connection-warning');
+    const connectionText = document.getElementById('connection-text');
+
+    // Load flow data
+    async function loadFlow() {
+      const res = await fetch(`/flow/${flowId}`);
+      const flow = await res.json();
+      flowDataTextarea.value = JSON.stringify(flow.flow_data, null, 2);
+      statusDiv.textContent = `Loaded at ${flow.last_modified} (Session: ${sessionId})`;
+    }
+
+    // Save flow
+    async function saveFlow() {
+      const flowData = JSON.parse(flowDataTextarea.value);
+      const username = usernameInput.value;
+      const res = await fetch(`/flow/${flowId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flowData, username, sessionId })
+      });
+      const result = await res.json();
+      statusDiv.textContent = result.message;
+    }
+
+    // Refresh page
+    function refreshPage() {
+      warningDiv.style.display = 'none';
+      saveBtn.disabled = false;
+      loadFlow();
+    }
+
+    // Start SSE
+    function startSSE() {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource(`/events/${flowId}?sessionId=${sessionId}`);
+      
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        warningText.textContent = data.message;
+        warningDiv.style.display = 'block';
+        saveBtn.disabled = true;
+        connectionWarningDiv.style.display = 'none';
+      };
+
+      eventSource.onerror = () => {
+        connectionText.textContent = 'Connection lost. Updates are paused.';
+        connectionWarningDiv.style.display = 'block';
+        statusDiv.textContent = `Disconnected (Session: ${sessionId})`;
+      };
+
+      eventSource.onopen = () => {
+        connectionWarningDiv.style.display = 'none';
+        statusDiv.textContent = `Connected (Session: ${sessionId})`;
+      };
+    }
+
+    // Reconnect SSE
+    function reconnectSSE() {
+      connectionText.textContent = 'Attempting to reconnect...';
+      startSSE();
+    }
+
+    // Initialize
+    loadFlow();
+    startSSE();
+  </script>
+</body>
+</html>
